@@ -6,7 +6,7 @@ type Round={id:string;area_id:string;title:string;question:string;pillar:string|
 type Contribution={id:string;round_id:string;area_id:string;participant_id:string;text:string;expected_result:string|null;created_at:string};
 type Group={id:string;session_id:string;area_id:string;title:string;description:string;approved:boolean;display_order:number;grouping_method:string};
 type Source={consolidated_idea_id:string;idea_id:string};
-export type AdminWorkspace={session:{id:string;status:string};areas:Area[];rounds:Round[];ideas:Contribution[];groups:Group[];sources:Source[];participants:{id:string;primary_area_id:string;last_seen_at:string}[]};
+export type AdminWorkspace={session:{id:string;status:string;current_consolidated_idea_id:string|null};areas:Area[];rounds:Round[];ideas:Contribution[];groups:Group[];sources:Source[];participants:{id:string;primary_area_id:string;last_seen_at:string}[]};
 type CallResult={ok:boolean;data?:Record<string,unknown>;error?:string};
 
 export function AdminGrouping({workspace,busy,onCall,onRefresh}:{workspace:AdminWorkspace;busy:boolean;onCall:(action:string,payload?:Record<string,unknown>)=>Promise<CallResult>;onRefresh:()=>Promise<void>}){

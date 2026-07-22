@@ -120,8 +120,21 @@ Deno.serve(async req=>{
       if(!transitions[session.status]?.includes(target))return json({error:`Transição inválida: ${session.status} → ${target}`},409);
       if(target==='VOTING_OPEN'){
         if(!session.current_consolidated_idea_id)return json({error:'Selecione uma ideia aprovada antes de abrir a votação.'},409);
-        const {data:selected}=await db.from('brainstorm_consolidated_ideas').select('id').eq('id',session.current_consolidated_idea_id).eq('session_id',session.id).eq('approved',true).maybeSingle();
+        const [selectedResult,approvedResult,ideasResult,sourcesResult]=await Promise.all([
+          db.from('brainstorm_consolidated_ideas').select('id').eq('id',session.current_consolidated_idea_id).eq('session_id',session.id).eq('approved',true).maybeSingle(),
+          db.from('brainstorm_consolidated_ideas').select('id').eq('session_id',session.id).eq('approved',true),
+          db.from('brainstorm_ideas').select('id').eq('session_id',session.id),
+          db.from('brainstorm_consolidated_idea_sources').select('consolidated_idea_id,idea_id')
+        ]);
+        const selected=selectedResult.data;const approved=approvedResult.data||[];const ideas=ideasResult.data||[];
         if(!selected)return json({error:'A ideia selecionada não está aprovada.'},409);
+        if(approved.length===0)return json({error:'Aprove pelo menos uma ideia antes de abrir a votação.'},409);
+        const ideaIds=new Set(ideas.map(idea=>idea.id));const approvedIds=new Set(approved.map(group=>group.id));
+        const relevantSources=(sourcesResult.data||[]).filter(source=>ideaIds.has(source.idea_id));
+        const linkedIdeas=new Set(relevantSources.map(source=>source.idea_id));
+        if(ideas.some(idea=>!linkedIdeas.has(idea.id)))return json({error:'Existem contribuições que ainda não foram agrupadas.'},409);
+        const groupsWithSources=new Set(relevantSources.map(source=>source.consolidated_idea_id));
+        if([...approvedIds].some(id=>!groupsWithSources.has(id)))return json({error:'Toda ideia aprovada precisa ter pelo menos uma contribuição.'},409);
       }
       await db.from('brainstorm_sessions').update({status:target,stage_started_at:new Date().toISOString(),stage_ends_at:null}).eq('id',session.id);
     }else if(action==='return_to_waiting'){
