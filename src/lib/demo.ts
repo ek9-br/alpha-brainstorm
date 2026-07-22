@@ -1,0 +1,8 @@
+import {Area,ConsolidatedIdea,Round,Session,SessionStatus} from '../types';
+export const demoAreas:Area[]=['Marketing','Adm: RH e Financeiro','Comercial','Desenvolvimento','Operacional'].map((name,index)=>({id:`demo-area-${index}`,name,slug:name.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,''),display_order:index+1}));
+export const demoRound:Round={id:'demo-round',session_id:'demo-session',area_id:demoAreas[0].id,title:'Marketing — Crescimento',question:'Como podemos ampliar o alcance da Alpha entre empresários e importadores com o perfil certo e transformar esse público em leads qualificados para o comercial?',supporting_text:'Pilar: Crescimento',duration_seconds:300,display_order:1};
+export const demoIdea:ConsolidatedIdea={id:'demo-consolidated',area_id:demoAreas[0].id,title:'Programa de indicação de clientes',description:'Criar incentivos para clientes e parceiros que gerarem novos negócios.',display_order:1,source_count:3};
+const initial:Session={id:'demo-session',code:'ALPHA2026',title:'Encontro de Crescimento 2026',status:'WAITING',current_round_id:demoRound.id,current_consolidated_idea_id:demoIdea.id,stage_ends_at:null};
+const key='brainstorm:demo-session';
+export function getDemoSession():Session{try{return {...initial,...JSON.parse(localStorage.getItem(key)||'{}')}}catch{return initial}}
+export function setDemoStatus(status:SessionStatus){const session={...getDemoSession(),status,stage_ends_at:status==='IDEATION_OPEN'?new Date(Date.now()+300000).toISOString():null};localStorage.setItem(key,JSON.stringify(session));window.dispatchEvent(new CustomEvent('demo-session',{detail:session}));return session}

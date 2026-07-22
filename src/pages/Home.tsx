@@ -1,0 +1,2 @@
+import {Link} from 'react-router-dom';import {Chrome} from '../components/Chrome';
+export default function Home(){return <Chrome><section className="mx-auto max-w-xl py-16 text-center"><p className="mb-3 font-semibold text-brand-700">Brainstorm empresarial ao vivo</p><h1 className="text-4xl font-black tracking-tight">Todo mundo pensando junto, no mesmo ritmo.</h1><p className="mt-4 text-slate-600">Acesse pelo link ou QR Code fornecido pelo facilitador.</p><Link className="btn-secondary mt-8" to="/s/ALPHA2026">Entrar na sessão demo</Link></section></Chrome>}

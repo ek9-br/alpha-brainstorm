@@ -1,0 +1,10 @@
+export type SessionStatus='WAITING'|'PRESENTING'|'IDEATION_OPEN'|'IDEATION_CLOSED'|'AI_GROUPING'|'GROUP_REVIEW'|'VOTING_OPEN'|'VOTING_WAITING'|'RESULTS'|'FINISHED';
+export type Area={id:string;name:string;slug:string;display_order:number};
+export type Session={id:string;code:string;title:string;status:SessionStatus;current_round_id:string|null;current_consolidated_idea_id:string|null;stage_ends_at:string|null};
+export type Participant={id:string;session_id:string;anonymous_token:string;primary_area_id:string};
+export type Round={id:string;session_id:string;area_id:string;title:string;question:string;supporting_text:string|null;pillar?:'Crescimento'|'Redução de custos'|'Otimização'|'Pergunta aberta'|null;topic?:string|null;context_text?:string|null;kpis?:string[];duration_seconds:number;display_order:number};
+export type Idea={id:string;text:string;expected_result:string|null;created_at:string};
+export type ConsolidatedIdea={id:string;area_id:string;title:string;description:string;display_order:number;source_count?:number};
+export const CRITERIA=[['revenue','Receita','Quanto pode aumentar a receita?',5],['margin','Margem','Quanto aumenta a margem ou o lucro?',5],['savings','Economia','Quanto reduz custos?',4],['ease','Facilidade','É fácil de implementar?',3],['speed','Tempo','Gera resultado rapidamente?',4],['scalability','Escalabilidade','Funciona com 10 vezes mais clientes?',5],['automation','Automação','Reduz trabalho manual?',4],['risk','Risco','Qual o risco de execução? (5 = baixo risco)',3],['customer','Cliente','Melhora a experiência do cliente?',4],['strategy','Estratégia','Está alinhada à visão da empresa?',5]] as const;
+export type CriterionKey=typeof CRITERIA[number][0];
+export type Ratings=Record<CriterionKey,number>;
