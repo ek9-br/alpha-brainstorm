@@ -47,9 +47,82 @@ Deno.serve(async req=>{
       await db.from('brainstorm_admin_audit_log').insert({session_id:session.id,action:'logout'});
       return json({ok:true});
     }
-    if(action==='set_status'){
+    if(action==='get_workspace'){
+      const [areas,rounds,ideas,groups,sources,participants]=await Promise.all([
+        db.from('brainstorm_areas').select('id,name,slug,display_order').eq('active',true).order('display_order'),
+        db.from('brainstorm_rounds').select('id,area_id,title,question,pillar,topic,display_order').eq('session_id',session.id).order('display_order'),
+        db.from('brainstorm_ideas').select('id,round_id,area_id,participant_id,text,expected_result,created_at').eq('session_id',session.id).order('created_at'),
+        db.from('brainstorm_consolidated_ideas').select('*').eq('session_id',session.id).order('display_order'),
+        db.from('brainstorm_consolidated_idea_sources').select('consolidated_idea_id,idea_id'),
+        db.from('brainstorm_participants').select('id,primary_area_id,last_seen_at').eq('session_id',session.id)
+      ]);
+      const failed=[areas,rounds,ideas,groups,sources,participants].find(result=>result.error);
+      if(failed?.error)throw failed.error;
+      const ideaIds=new Set((ideas.data||[]).map(item=>item.id));
+      return json({
+        session,
+        areas:areas.data||[],rounds:rounds.data||[],ideas:ideas.data||[],groups:groups.data||[],
+        sources:(sources.data||[]).filter(source=>ideaIds.has(source.idea_id)),
+        participants:participants.data||[]
+      });
+    }else if(action==='create_group'){
+      const {data,error}=await db.rpc('brainstorm_admin_create_group',{
+        p_session_id:session.id,p_area_id:String(payload.area_id||''),p_title:String(payload.title||''),
+        p_description:String(payload.description||''),p_idea_ids:Array.isArray(payload.idea_ids)?payload.idea_ids:[]
+      });
+      if(error)throw error;
+      await db.from('brainstorm_admin_audit_log').insert({session_id:session.id,action,payload:{...payload,group_id:data.id}});
+      return json({group:data});
+    }else if(['update_group','set_group_sources','delete_group'].includes(action)){
+      const groupId=String(payload.group_id||'');
+      const {data:owned}=await db.from('brainstorm_consolidated_ideas').select('id').eq('id',groupId).eq('session_id',session.id).maybeSingle();
+      if(!owned)return json({error:'Ideia consolidada não encontrada nesta sessão'},404);
+      if(action==='update_group'){
+        const {data,error}=await db.rpc('brainstorm_admin_update_group',{
+          p_group_id:groupId,p_title:String(payload.title||''),p_description:String(payload.description||''),p_approved:Boolean(payload.approved)
+        });
+        if(error)throw error;
+        await db.from('brainstorm_admin_audit_log').insert({session_id:session.id,action,payload});
+        return json({group:data});
+      }
+      if(action==='set_group_sources'){
+        const {data,error}=await db.rpc('brainstorm_admin_set_group_sources',{
+          p_group_id:groupId,p_idea_ids:Array.isArray(payload.idea_ids)?payload.idea_ids:[]
+        });
+        if(error)throw error;
+        await db.from('brainstorm_admin_audit_log').insert({session_id:session.id,action,payload});
+        return json({source_count:data});
+      }
+      const {data,error}=await db.rpc('brainstorm_admin_delete_group',{p_group_id:groupId});
+      if(error)throw error;
+      await db.from('brainstorm_admin_audit_log').insert({session_id:session.id,action,payload});
+      return json({deleted:data});
+    }else if(action==='reorder_groups'){
+      const {data,error}=await db.rpc('brainstorm_admin_reorder_groups',{
+        p_session_id:session.id,p_group_ids:Array.isArray(payload.group_ids)?payload.group_ids:[]
+      });
+      if(error)throw error;
+      await db.from('brainstorm_admin_audit_log').insert({session_id:session.id,action,payload});
+      return json({updated:data});
+    }else if(action==='select_current_idea'){
+      const {data,error}=await db.rpc('brainstorm_admin_select_current_idea',{
+        p_session_id:session.id,p_group_id:String(payload.group_id||'')
+      });
+      if(error)throw error;
+      await db.from('brainstorm_admin_audit_log').insert({session_id:session.id,action,payload});
+      return json({current_idea_id:data});
+    }else if(action==='voting_progress'){
+      const {data,error}=await db.rpc('brainstorm_admin_voting_progress',{p_session_id:session.id});
+      if(error)throw error;
+      return json({progress:data});
+    }else if(action==='set_status'){
       const target=String(payload.status||'');
       if(!transitions[session.status]?.includes(target))return json({error:`Transição inválida: ${session.status} → ${target}`},409);
+      if(target==='VOTING_OPEN'){
+        if(!session.current_consolidated_idea_id)return json({error:'Selecione uma ideia aprovada antes de abrir a votação.'},409);
+        const {data:selected}=await db.from('brainstorm_consolidated_ideas').select('id').eq('id',session.current_consolidated_idea_id).eq('session_id',session.id).eq('approved',true).maybeSingle();
+        if(!selected)return json({error:'A ideia selecionada não está aprovada.'},409);
+      }
       await db.from('brainstorm_sessions').update({status:target,stage_started_at:new Date().toISOString(),stage_ends_at:null}).eq('id',session.id);
     }else if(action==='return_to_waiting'){
       await db.from('brainstorm_sessions').update({status:'WAITING',stage_started_at:new Date().toISOString(),stage_ends_at:null,current_consolidated_idea_id:null}).eq('id',session.id);
