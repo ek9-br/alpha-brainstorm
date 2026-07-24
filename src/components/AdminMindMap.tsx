@@ -1,8 +1,7 @@
-import {KeyboardEvent,PointerEvent,useEffect,useMemo,useRef,useState,WheelEvent} from 'react';
-import {LocateFixed,Maximize2,Minimize2,Network,Search,X,ZoomIn,ZoomOut} from 'lucide-react';
+import {KeyboardEvent,useEffect,useLayoutEffect,useMemo,useRef,useState} from 'react';
+import {ChevronsDownUp,LocateFixed,Maximize2,Minimize2,Network,Search,X,ZoomIn,ZoomOut} from 'lucide-react';
 import {AdminWorkspace} from './AdminGrouping';
 
-type ViewBox={x:number;y:number;width:number;height:number};
 type Contribution=AdminWorkspace['ideas'][number];
 type Group=AdminWorkspace['groups'][number];
 type MapIdea=Contribution&{x:number;y:number;searchText:string};
@@ -10,6 +9,7 @@ type MapGroup={key:string;group:Group;x:number;y:number;startY:number;endY:numbe
 type MapPillar={key:string;name:string;x:number;y:number;startY:number;endY:number;groups:MapGroup[]};
 type MapArea=AdminWorkspace['areas'][number]&{x:number;y:number;color:string;softColor:string;startY:number;endY:number;pillars:MapPillar[];groupCount:number;ideaCount:number};
 type SearchMatch={key:string;kind:'group'|'idea';group:MapGroup;idea?:MapIdea};
+type FocusTarget={kind:'area'|'pillar'|'group'|'idea';key:string};
 
 const CANVAS_WIDTH=2260;
 const PILLAR_ORDER=['Crescimento','Redução de custos','Otimização','Pergunta aberta','Sem pilar'];
@@ -22,14 +22,18 @@ const COLORS=[
 ];
 
 export function AdminMindMap({workspace}:{workspace:AdminWorkspace}){
- const compact=typeof window!=='undefined'&&window.innerWidth<640;
  const [query,setQuery]=useState('');
  const [matchIndex,setMatchIndex]=useState(-1);
  const [fullscreen,setFullscreen]=useState(false);
  const [selectedGroupKey,setSelectedGroupKey]=useState<string|null>(null);
  const [selectedIdeaId,setSelectedIdeaId]=useState<string|null>(null);
  const [navigationAreaId,setNavigationAreaId]=useState(workspace.areas[0]?.id||'');
- const panStart=useRef<{clientX:number;clientY:number;viewX:number;viewY:number}|null>(null);
+ const [expandedAreas,setExpandedAreas]=useState<Set<string>>(()=>new Set());
+ const [expandedPillars,setExpandedPillars]=useState<Set<string>>(()=>new Set());
+ const [expandedGroups,setExpandedGroups]=useState<Set<string>>(()=>new Set());
+ const [zoomLevel,setZoomLevel]=useState(()=>typeof window!=='undefined'&&window.innerWidth<640 ? .5 : .72);
+ const [pendingFocus,setPendingFocus]=useState<FocusTarget|null>(null);
+ const viewportRef=useRef<HTMLDivElement|null>(null);
  const roundsById=useMemo(()=>new Map(workspace.rounds.map(round=>[round.id,round])),[workspace.rounds]);
  const ideasById=useMemo(()=>new Map(workspace.ideas.map(idea=>[idea.id,idea])),[workspace.ideas]);
  const sourceIdsByGroup=useMemo(()=>{const result=new Map<string,string[]>();workspace.sources.forEach(source=>result.set(source.consolidated_idea_id,[...(result.get(source.consolidated_idea_id)||[]),source.idea_id]));return result},[workspace.sources]);
@@ -48,28 +52,37 @@ export function AdminMindMap({workspace}:{workspace:AdminWorkspace}){
      const ideas=(sourceIdsByGroup.get(group.id)||[]).map(id=>ideasById.get(id)).filter((idea):idea is Contribution=>Boolean(idea)&&(roundsById.get(idea!.round_id)?.pillar?.trim()||'Sem pilar')===pillarName);
      if(!ideas.length)return[];
      const groupStart=cursorY;
-     const mappedIdeas=ideas.map(idea=>{const mapped={...idea,x:1480,y:cursorY,searchText:`${idea.text} ${idea.expected_result||''} ${roundsById.get(idea.round_id)?.title||''}`.toLowerCase()};cursorY+=76;return mapped});
-     const groupEnd=cursorY-76;
+     const groupKey=`${group.id}:${pillarName}`;
+     const mappedIdeas=ideas.map(idea=>{
+      const mapped={...idea,x:1480,y:cursorY,searchText:`${idea.text} ${idea.expected_result||''} ${roundsById.get(idea.round_id)?.title||''}`.toLowerCase()};
+      if(expandedAreas.has(area.id)&&expandedPillars.has(`${area.id}:${pillarName}`)&&expandedGroups.has(groupKey))cursorY+=76;
+      return mapped
+     });
+     const groupExpanded=expandedAreas.has(area.id)&&expandedPillars.has(`${area.id}:${pillarName}`)&&expandedGroups.has(groupKey);
+     if(!groupExpanded)cursorY+=96;
+     const groupEnd=groupExpanded?cursorY-76:groupStart;
      const mapped:MapGroup={key:`${group.id}:${pillarName}`,group,x:980,y:(groupStart+groupEnd)/2,startY:groupStart,endY:groupEnd,ideas:mappedIdeas,searchText:`${group.title} ${group.description} ${mappedIdeas.map(idea=>idea.searchText).join(' ')}`.toLowerCase()};
-     cursorY+=28;
+     cursorY+=groupExpanded?28:14;
      return[mapped];
     });
-    const pillarEnd=Math.max(pillarStart,cursorY-28);
+    const pillarExpanded=expandedAreas.has(area.id)&&expandedPillars.has(`${area.id}:${pillarName}`);
+    if(!pillarExpanded)cursorY=pillarStart+104;
+    const pillarEnd=Math.max(pillarStart,cursorY-(pillarExpanded?28:0));
     const mapped={key:`${area.id}:${pillarName}`,name:pillarName,x:650,y:(pillarStart+pillarEnd)/2,startY:pillarStart,endY:pillarEnd,groups};
-    cursorY+=48;
+    cursorY+=pillarExpanded?48:18;
     return mapped;
    });
-   const areaEnd=Math.max(areaStart,cursorY-48);
+   if(!expandedAreas.has(area.id))cursorY=areaStart+112;
+   const areaEnd=Math.max(areaStart,cursorY-(expandedAreas.has(area.id)?48:0));
    const mapped={...area,x:340,y:(areaStart+areaEnd)/2,color:COLORS[areaIndex%COLORS.length].color,softColor:COLORS[areaIndex%COLORS.length].softColor,startY:areaStart,endY:areaEnd,pillars,groupCount:areaGroups.length,ideaCount:pillars.reduce((sum,pillar)=>sum+pillar.groups.reduce((total,group)=>total+group.ideas.length,0),0)};
-   cursorY+=90;
+   cursorY+=expandedAreas.has(area.id)?90:24;
    return mapped;
   });
   return {areas,height:Math.max(1000,cursorY),groupCount:approved.length,ideaCount:workspace.sources.filter(source=>approved.some(group=>group.id===source.consolidated_idea_id)).length};
- },[workspace.areas,workspace.groups,workspace.sources,sourceIdsByGroup,ideasById,roundsById]);
+ },[workspace.areas,workspace.groups,workspace.sources,sourceIdsByGroup,ideasById,roundsById,expandedAreas,expandedPillars,expandedGroups]);
 
  const allGroups=useMemo(()=>layout.areas.flatMap(area=>area.pillars.flatMap(pillar=>pillar.groups)),[layout]);
  const navigationArea=layout.areas.find(area=>area.id===navigationAreaId)||layout.areas[0];
- const [view,setView]=useState<ViewBox>(compact?{x:600,y:20,width:980,height:1180}:{x:230,y:20,width:1960,height:980});
  const normalized=query.trim().toLowerCase();
  const matches=useMemo<SearchMatch[]>(()=>allGroups.flatMap(group=>{
   const result:SearchMatch[]=[];
@@ -84,20 +97,60 @@ export function AdminMindMap({workspace}:{workspace:AdminWorkspace}){
  const groupPillarCount=selectedGroup?new Set(allGroups.filter(group=>group.group.id===selectedGroup.group.id).map(group=>group.key.slice(group.group.id.length+1))).size:0;
  const rootY=layout.height/2;
 
- const clamp=(next:ViewBox):ViewBox=>({...next,x:Math.max(-120,Math.min(CANVAS_WIDTH-next.width+120,next.x)),y:Math.max(-120,Math.min(layout.height-next.height+120,next.y))});
- const zoom=(factor:number)=>setView(current=>{const width=Math.max(620,Math.min(CANVAS_WIDTH*1.06,current.width*factor));const height=width*(current.height/current.width);return clamp({x:current.x+(current.width-width)/2,y:current.y+(current.height-height)/2,width,height})});
- const fitAll=()=>setView({x:0,y:0,width:CANVAS_WIDTH,height:layout.height});
- const focusArea=(area:MapArea)=>{setNavigationAreaId(area.id);setView(clamp(compact?{x:300,y:area.startY-80,width:1220,height:1180}:{x:250,y:area.startY-80,width:1900,height:Math.max(620,Math.min(1100,area.endY-area.startY+180))}))};
- const focusPillar=(pillar:MapPillar)=>{setNavigationAreaId(pillar.key.slice(0,pillar.key.indexOf(':')));setView(clamp(compact?{x:560,y:pillar.startY-80,width:1100,height:1050}:{x:560,y:pillar.startY-80,width:1580,height:Math.max(600,Math.min(1000,pillar.endY-pillar.startY+180))}))};
- const focusGroup=(group:MapGroup)=>{setSelectedGroupKey(group.key);setSelectedIdeaId(null);setView(clamp(compact?{x:880,y:group.y-450,width:1050,height:900}:{x:830,y:group.y-300,width:1370,height:650}))};
- const focusIdea=(group:MapGroup,idea:MapIdea)=>{setSelectedGroupKey(group.key);setSelectedIdeaId(idea.id);setView(clamp(compact?{x:1300,y:idea.y-380,width:900,height:760}:{x:1260,y:idea.y-250,width:920,height:520}))};
+ const zoom=(factor:number)=>setZoomLevel(current=>clampMindMapZoom(current*factor));
+ const fitAll=()=>{
+  const viewport=viewportRef.current;
+  if(!viewport)return;
+  const next=Math.min(viewport.clientWidth/CANVAS_WIDTH,viewport.clientHeight/layout.height);
+  setZoomLevel(clampMindMapZoom(next));
+  viewport.scrollTo({left:0,top:0})
+ };
+ const openArea=(areaId:string)=>setExpandedAreas(current=>current.has(areaId)?current:new Set(current).add(areaId));
+ const openPillar=(pillarKey:string)=>setExpandedPillars(current=>current.has(pillarKey)?current:new Set(current).add(pillarKey));
+ const openGroup=(groupKey:string)=>setExpandedGroups(current=>current.has(groupKey)?current:new Set(current).add(groupKey));
+ const toggleArea=(area:MapArea)=>{
+  setNavigationAreaId(area.id);
+  setExpandedAreas(current=>{const next=new Set(current);next.has(area.id)?next.delete(area.id):next.add(area.id);return next})
+ };
+ const togglePillar=(area:MapArea,pillar:MapPillar)=>{
+  openArea(area.id);
+  setNavigationAreaId(area.id);
+  setExpandedPillars(current=>{const next=new Set(current);next.has(pillar.key)?next.delete(pillar.key):next.add(pillar.key);return next})
+ };
+ const toggleGroup=(area:MapArea,pillar:MapPillar,group:MapGroup)=>{
+  openArea(area.id);
+  openPillar(pillar.key);
+  setSelectedGroupKey(group.key);
+  setSelectedIdeaId(null);
+  setExpandedGroups(current=>{const next=new Set(current);next.has(group.key)?next.delete(group.key):next.add(group.key);return next})
+ };
+ const collapseAll=()=>{
+  setExpandedAreas(new Set());
+  setExpandedPillars(new Set());
+  setExpandedGroups(new Set());
+  setSelectedGroupKey(null);
+  setSelectedIdeaId(null);
+  viewportRef.current?.scrollTo({left:0,top:0})
+ };
+ const focusArea=(area:MapArea)=>{openArea(area.id);setNavigationAreaId(area.id);setPendingFocus({kind:'area',key:area.id})};
+ const focusPillar=(pillar:MapPillar)=>{const areaId=pillar.key.slice(0,pillar.key.indexOf(':'));openArea(areaId);openPillar(pillar.key);setNavigationAreaId(areaId);setPendingFocus({kind:'pillar',key:pillar.key})};
+ const controlArea=(area:MapArea)=>expandedAreas.has(area.id)?toggleArea(area):focusArea(area);
+ const controlPillar=(area:MapArea,pillar:MapPillar)=>expandedAreas.has(area.id)&&expandedPillars.has(pillar.key)?togglePillar(area,pillar):focusPillar(pillar);
+ const focusGroup=(group:MapGroup)=>{const pillarKey=`${group.group.area_id}:${group.key.slice(group.group.id.length+1)}`;openArea(group.group.area_id);openPillar(pillarKey);openGroup(group.key);setSelectedGroupKey(group.key);setSelectedIdeaId(null);setPendingFocus({kind:'group',key:group.key})};
+ const focusIdea=(group:MapGroup,idea:MapIdea)=>{const pillarKey=`${group.group.area_id}:${group.key.slice(group.group.id.length+1)}`;openArea(group.group.area_id);openPillar(pillarKey);openGroup(group.key);setSelectedGroupKey(group.key);setSelectedIdeaId(idea.id);setPendingFocus({kind:'idea',key:idea.id})};
  const nextMatch=()=>{if(!matches.length)return;const index=(matchIndex+1)%matches.length;const match=matches[index];setMatchIndex(index);match.kind==='idea'&&match.idea?focusIdea(match.group,match.idea):focusGroup(match.group)};
  const handleSearch=(value:string)=>{setQuery(value);setMatchIndex(-1)};
  const activate=(event:KeyboardEvent<SVGGElement>,action:()=>void)=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();action()}};
- const startPan=(event:PointerEvent<SVGSVGElement>)=>{if((event.target as Element).closest('[data-map-node]'))return;event.currentTarget.setPointerCapture(event.pointerId);panStart.current={clientX:event.clientX,clientY:event.clientY,viewX:view.x,viewY:view.y}};
- const movePan=(event:PointerEvent<SVGSVGElement>)=>{if(!panStart.current)return;const bounds=event.currentTarget.getBoundingClientRect();const dx=(event.clientX-panStart.current.clientX)*view.width/bounds.width;const dy=(event.clientY-panStart.current.clientY)*view.height/bounds.height;setView(current=>clamp({...current,x:panStart.current!.viewX-dx,y:panStart.current!.viewY-dy}))};
- const endPan=()=>{panStart.current=null};
- const handleWheel=(event:WheelEvent<SVGSVGElement>)=>{event.preventDefault();zoom(event.deltaY>0?1.12:.88)};
+ useLayoutEffect(()=>{
+  if(!pendingFocus||!viewportRef.current)return;
+  let point:{x:number;y:number}|null=null;
+  if(pendingFocus.kind==='area'){const area=layout.areas.find(item=>item.id===pendingFocus.key);if(area)point={x:area.x+120,y:area.y}}
+  if(pendingFocus.kind==='pillar'){const pillar=layout.areas.flatMap(area=>area.pillars).find(item=>item.key===pendingFocus.key);if(pillar)point={x:pillar.x+125,y:pillar.y}}
+  if(pendingFocus.kind==='group'){const group=allGroups.find(item=>item.key===pendingFocus.key);if(group)point={x:group.x+210,y:group.y}}
+  if(pendingFocus.kind==='idea'){const idea=allGroups.flatMap(group=>group.ideas).find(item=>item.id===pendingFocus.key);if(idea)point={x:idea.x+360,y:idea.y}}
+  if(point){const viewport=viewportRef.current;viewport.scrollTo({left:Math.max(0,point.x*zoomLevel-viewport.clientWidth/2),top:Math.max(0,point.y*zoomLevel-viewport.clientHeight/2),behavior:'smooth'})}
+  setPendingFocus(null)
+ },[layout,allGroups,pendingFocus,zoomLevel]);
  useEffect(()=>{if(selectedGroupKey||!workspace.session.current_consolidated_idea_id)return;const first=allGroups.find(group=>group.group.id===workspace.session.current_consolidated_idea_id);if(first)setSelectedGroupKey(first.key)},[allGroups,selectedGroupKey,workspace.session.current_consolidated_idea_id]);
  useEffect(()=>{if(!fullscreen)return;const previous=document.body.style.overflow;document.body.style.overflow='hidden';const close=(event:globalThis.KeyboardEvent)=>{if(event.key==='Escape')setFullscreen(false)};window.addEventListener('keydown',close);return()=>{document.body.style.overflow=previous;window.removeEventListener('keydown',close)}},[fullscreen]);
 
@@ -115,26 +168,32 @@ export function AdminMindMap({workspace}:{workspace:AdminWorkspace}){
  </div>:null;
 
  return <section className="mt-8">
-  <div className="flex flex-wrap items-end justify-between gap-3"><div><p className="font-semibold text-brand-700">Visão geral</p><h2 className="flex items-center gap-2 text-2xl font-black"><Network/>Mapa mental da votação</h2><p className="mt-1 text-sm text-slate-600">Hierarquia completa: setor, pilar, grupo consolidado e ideias originais.</p></div><span className="rounded-full bg-brand-50 px-3 py-1 text-sm font-bold text-brand-700">{layout.groupCount} grupos · {layout.ideaCount} ideias</span></div>
+  <div className="flex flex-wrap items-end justify-between gap-3"><div><p className="font-semibold text-brand-700">Visão geral</p><h2 className="flex items-center gap-2 text-2xl font-black"><Network/>Mapa mental da votação</h2><p className="mt-1 text-sm text-slate-600">Abra somente os setores, pilares, grupos e ideias que quiser explorar.</p></div><span className="rounded-full bg-brand-50 px-3 py-1 text-sm font-bold text-brand-700">{layout.groupCount} grupos · {layout.ideaCount} ideias</span></div>
   <div className={fullscreen?'fixed inset-0 z-[100] flex flex-col bg-white p-3 sm:p-5':'card mt-5 p-3 sm:p-5'}>
-   <div className="flex items-start justify-between gap-3"><div className="flex flex-wrap gap-2">{layout.areas.map(area=><button className={`min-h-10 rounded-xl border px-3 text-sm font-bold transition hover:-translate-y-0.5 ${navigationArea?.id===area.id?'ring-2 ring-offset-2':''}`} style={{borderColor:area.color,color:area.color,backgroundColor:area.softColor}} onClick={()=>focusArea(area)} key={area.id}>{area.name} · {area.groupCount} grupos</button>)}<button className="min-h-10 rounded-xl border border-slate-300 bg-white px-3 text-sm font-bold" onClick={fitAll}><Maximize2 className="mr-1 inline" size={15}/>Ver tudo</button></div><button className="btn-secondary shrink-0" onClick={()=>setFullscreen(value=>!value)}>{fullscreen?<><Minimize2 className="mr-2" size={18}/>Sair da tela cheia</>:<><Maximize2 className="mr-2" size={18}/>Abrir em tela cheia</>}</button></div>
-   {navigationArea&&<div className="mt-3 flex flex-wrap items-center gap-2"><span className="text-xs font-bold uppercase tracking-wide text-slate-500">Pilares de {navigationArea.name}</span>{navigationArea.pillars.map(pillar=><button className="rounded-lg border px-3 py-1.5 text-xs font-bold hover:bg-slate-50" style={{borderColor:navigationArea.color,color:navigationArea.color}} onClick={()=>focusPillar(pillar)} key={pillar.key}>{pillar.name} · {pillar.groups.length}</button>)}</div>}
-   <div className="mt-3 flex flex-wrap items-end gap-2"><label className="min-w-64 flex-1"><span className="label">Buscar grupo ou ideia original</span><span className="relative block"><Search className="absolute left-3 top-3.5 text-slate-400" size={18}/><input className="field pl-10" value={query} onChange={event=>handleSearch(event.target.value)} onKeyDown={event=>event.key==='Enter'&&nextMatch()} placeholder="Ex.: CRM, documentos, parceiros"/></span></label><button className="btn-secondary" disabled={!normalized||matches.length===0} onClick={nextMatch}><LocateFixed className="mr-2" size={17}/>{normalized?`${matches.length} resultado(s)`:'Localizar'}</button><div className="flex gap-1"><button aria-label="Aumentar mapa" className="btn-secondary min-w-12 px-3" onClick={()=>zoom(.82)}><ZoomIn size={19}/></button><button aria-label="Diminuir mapa" className="btn-secondary min-w-12 px-3" onClick={()=>zoom(1.2)}><ZoomOut size={19}/></button></div></div>
+   <div className="rounded-xl border border-brand-200 bg-brand-50 p-3"><p className="text-sm font-black text-brand-900">Controles para abrir e fechar</p><p className="mt-1 text-xs text-brand-800">Use <strong>+ Abrir</strong> ou <strong>− Fechar</strong>. Cada setor, pilar e grupo funciona de forma independente.</p></div>
+   <div className="mt-3 flex items-start justify-between gap-3"><div><p className="mb-2 text-xs font-black uppercase tracking-wide text-slate-500">Setores</p><div className="flex flex-wrap gap-2">{layout.areas.map(area=>{const expanded=expandedAreas.has(area.id);return <button aria-expanded={expanded} className={`min-h-10 rounded-xl border px-3 text-sm font-bold transition hover:-translate-y-0.5 ${expanded?'shadow-sm ring-2 ring-offset-1':''}`} style={{borderColor:area.color,color:area.color,backgroundColor:expanded?area.softColor:'white'}} onClick={()=>controlArea(area)} key={area.id}><span className="mr-1 font-black">{expanded?'− Fechar':'+ Abrir'}</span> {area.name}</button>})}<button className="min-h-10 rounded-xl border border-slate-300 bg-white px-3 text-sm font-bold" onClick={fitAll}><Maximize2 className="mr-1 inline" size={15}/>Ver tudo</button><button className="min-h-10 rounded-xl border border-slate-300 bg-white px-3 text-sm font-bold" onClick={collapseAll}><ChevronsDownUp className="mr-1 inline" size={15}/>Recolher tudo</button></div></div><button className="btn-secondary shrink-0" onClick={()=>setFullscreen(value=>!value)}>{fullscreen?<><Minimize2 className="mr-2" size={18}/>Sair da tela cheia</>:<><Maximize2 className="mr-2" size={18}/>Abrir em tela cheia</>}</button></div>
+   {navigationArea&&<div className="mt-3 rounded-xl border border-slate-200 bg-white p-3"><span className="text-xs font-black uppercase tracking-wide text-slate-500">Pilares de {navigationArea.name}</span><div className="mt-2 flex flex-wrap gap-2">{navigationArea.pillars.map(pillar=>{const expanded=expandedAreas.has(navigationArea.id)&&expandedPillars.has(pillar.key);return <button aria-expanded={expanded} className={`rounded-lg border px-3 py-2 text-xs font-bold ${expanded?'shadow-sm ring-2 ring-offset-1':'hover:bg-slate-50'}`} style={{borderColor:navigationArea.color,color:navigationArea.color,backgroundColor:expanded?navigationArea.softColor:'white'}} onClick={()=>controlPillar(navigationArea,pillar)} key={pillar.key}><span className="mr-1 font-black">{expanded?'− Fechar':'+ Abrir'}</span> {pillar.name} · {pillar.groups.length}</button>})}</div></div>}
+   <div className="mt-3 flex flex-wrap items-end gap-2"><label className="min-w-64 flex-1"><span className="label">Buscar grupo ou ideia original</span><span className="relative block"><Search className="absolute left-3 top-3.5 text-slate-400" size={18}/><input className="field pl-10" value={query} onChange={event=>handleSearch(event.target.value)} onKeyDown={event=>event.key==='Enter'&&nextMatch()} placeholder="Ex.: CRM, documentos, parceiros"/></span></label><button className="btn-secondary" disabled={!normalized||matches.length===0} onClick={nextMatch}><LocateFixed className="mr-2" size={17}/>{normalized?`${matches.length} resultado(s)`:'Localizar'}</button><div className="flex gap-1"><button aria-label="Aumentar mapa" className="btn-secondary min-w-12 px-3" onClick={()=>zoom(1.18)}><ZoomIn size={19}/></button><button aria-label="Diminuir mapa" className="btn-secondary min-w-12 px-3" onClick={()=>zoom(.85)}><ZoomOut size={19}/></button></div></div>
    <div className="mt-3 flex flex-wrap gap-2 text-xs font-bold"><span className="rounded-full bg-slate-900 px-3 py-1 text-white">Setor</span><span className="rounded-full bg-blue-100 px-3 py-1 text-blue-800">Pilar</span><span className="rounded-full border border-slate-400 bg-white px-3 py-1">Grupo</span><span className="rounded-full bg-slate-100 px-3 py-1 text-slate-700">Ideia original</span></div>
-   <p className="mt-2 text-xs text-slate-500">Arraste espaços vazios, use a roda para ampliar e clique em qualquer setor, pilar, grupo ou ideia. Pressione Esc para sair da tela cheia.</p>
+   <p className="mt-2 text-xs text-slate-500">Clique em setor, pilar ou grupo para abrir e fechar aquele ramo. Navegue pelas barras de rolagem do mapa e use os botões + e − para ampliar. Pressione Esc para sair da tela cheia.</p>
    <div className={`relative mt-3 overflow-hidden rounded-xl border border-slate-200 bg-slate-50 ${fullscreen?'flex min-h-0 flex-1 flex-col sm:flex-row':''}`}>
-    <div className={fullscreen?'min-h-0 min-w-0 flex-1':'contents'}>
-     <svg className={fullscreen?'h-full w-full cursor-grab touch-none select-none active:cursor-grabbing':'h-[38rem] w-full cursor-grab touch-none select-none active:cursor-grabbing'} viewBox={`${view.x} ${view.y} ${view.width} ${view.height}`} role="img" aria-label="Mapa mental completo das ideias aprovadas" onPointerDown={startPan} onPointerMove={movePan} onPointerUp={endPan} onPointerCancel={endPan} onPointerLeave={endPan} onWheel={handleWheel}>
+    <div
+     ref={viewportRef}
+     aria-label="Área navegável do mapa mental"
+     className={fullscreen?'min-h-0 min-w-0 flex-1 overflow-auto overscroll-contain outline-none focus:ring-2 focus:ring-inset focus:ring-brand-400':'h-[38rem] w-full overflow-auto overscroll-contain outline-none focus:ring-2 focus:ring-inset focus:ring-brand-400'}
+     tabIndex={0}
+    >
+     <svg className="block max-w-none select-none" width={CANVAS_WIDTH*zoomLevel} height={layout.height*zoomLevel} viewBox={`0 0 ${CANVAS_WIDTH} ${layout.height}`} role="img" aria-label="Mapa mental completo das ideias aprovadas">
       <rect x="0" y="0" width={CANVAS_WIDTH} height={layout.height} fill="#f8fafc"/>
       {layout.areas.map(area=><path key={`root-${area.id}`} d={`M 270 ${rootY} C 300 ${rootY}, 300 ${area.y}, 340 ${area.y}`} fill="none" stroke={area.color} strokeWidth="5" opacity=".38"/>)}
-      {layout.areas.flatMap(area=>area.pillars.map(pillar=><path key={`area-${pillar.key}`} d={`M 580 ${area.y} C 615 ${area.y}, 610 ${pillar.y}, 650 ${pillar.y}`} fill="none" stroke={area.color} strokeWidth="4" opacity=".34"/>))}
-      {layout.areas.flatMap(area=>area.pillars.flatMap(pillar=>pillar.groups.map(group=><path key={`pillar-${group.key}`} d={`M 900 ${pillar.y} C 940 ${pillar.y}, 930 ${group.y}, 980 ${group.y}`} fill="none" stroke={area.color} strokeWidth="3" opacity=".3"/>)))}
-      {layout.areas.flatMap(area=>area.pillars.flatMap(pillar=>pillar.groups.flatMap(group=>group.ideas.map(idea=><path key={`group-${idea.id}`} d={`M 1400 ${group.y} C 1435 ${group.y}, 1435 ${idea.y}, 1480 ${idea.y}`} fill="none" stroke={area.color} strokeWidth="2" opacity=".25"/>))))}
+      {layout.areas.filter(area=>expandedAreas.has(area.id)).flatMap(area=>area.pillars.map(pillar=><path key={`area-${pillar.key}`} d={`M 580 ${area.y} C 615 ${area.y}, 610 ${pillar.y}, 650 ${pillar.y}`} fill="none" stroke={area.color} strokeWidth="4" opacity=".34"/>))}
+      {layout.areas.filter(area=>expandedAreas.has(area.id)).flatMap(area=>area.pillars.filter(pillar=>expandedPillars.has(pillar.key)).flatMap(pillar=>pillar.groups.map(group=><path key={`pillar-${group.key}`} d={`M 900 ${pillar.y} C 940 ${pillar.y}, 930 ${group.y}, 980 ${group.y}`} fill="none" stroke={area.color} strokeWidth="3" opacity=".3"/>)))}
+      {layout.areas.filter(area=>expandedAreas.has(area.id)).flatMap(area=>area.pillars.filter(pillar=>expandedPillars.has(pillar.key)).flatMap(pillar=>pillar.groups.filter(group=>expandedGroups.has(group.key)).flatMap(group=>group.ideas.map(idea=><path key={`group-${idea.id}`} d={`M 1400 ${group.y} C 1435 ${group.y}, 1435 ${idea.y}, 1480 ${idea.y}`} fill="none" stroke={area.color} strokeWidth="2" opacity=".25"/>))))}
       <g data-map-node><rect x="30" y={rootY-48} width="240" height="96" rx="24" fill="#13211f"/><text x="150" y={rootY-8} textAnchor="middle" fill="white" fontSize="21" fontWeight="800">ALPHA 2026</text><text x="150" y={rootY+22} textAnchor="middle" fill="#d5f2eb" fontSize="14">{layout.groupCount} grupos · {layout.ideaCount} ideias</text></g>
-      {layout.areas.map(area=><g data-map-node key={area.id} className="cursor-pointer outline-none" role="button" tabIndex={0} aria-label={`Setor ${area.name}, ${area.groupCount} grupos`} onClick={()=>focusArea(area)} onKeyDown={event=>activate(event,()=>focusArea(area))}><rect x={area.x} y={area.y-38} width="240" height="76" rx="20" fill={area.color}/><text x={area.x+120} y={area.y-5} textAnchor="middle" fill="white" fontSize="18" fontWeight="800">{area.name}</text><text x={area.x+120} y={area.y+21} textAnchor="middle" fill="white" fontSize="13">{area.groupCount} grupos · {area.ideaCount} ideias</text></g>)}
-      {layout.areas.flatMap(area=>area.pillars.map(pillar=><g data-map-node key={pillar.key} className="cursor-pointer outline-none" role="button" tabIndex={0} aria-label={`Pilar ${pillar.name} do setor ${area.name}, ${pillar.groups.length} grupos`} onClick={()=>focusPillar(pillar)} onKeyDown={event=>activate(event,()=>focusPillar(pillar))}><rect x={pillar.x} y={pillar.y-34} width="250" height="68" rx="18" fill={area.softColor} stroke={area.color} strokeWidth="3"/><text x={pillar.x+125} y={pillar.y-4} textAnchor="middle" fill={area.color} fontSize="17" fontWeight="800">{pillar.name}</text><text x={pillar.x+125} y={pillar.y+20} textAnchor="middle" fill={area.color} fontSize="12">{pillar.groups.length} grupos · {pillar.groups.reduce((sum,group)=>sum+group.ideas.length,0)} ideias</text></g>))}
-      {layout.areas.flatMap(area=>area.pillars.flatMap(pillar=>pillar.groups.map(group=>{const active=selectedGroupKey===group.key&&!selectedIdeaId;const matched=!normalized||group.searchText.includes(normalized);const lines=splitLabel(group.group.title,42,2);return <g data-map-node key={group.key} className="cursor-pointer outline-none" role="button" tabIndex={0} aria-label={`Grupo ${group.group.title}, ${group.ideas.length} ideias no pilar ${pillar.name}`} onClick={()=>focusGroup(group)} onKeyDown={event=>activate(event,()=>focusGroup(group))} opacity={matched?1:.14}><rect x={group.x} y={group.y-36} width="420" height="72" rx="17" fill={active?area.color:'white'} stroke={area.color} strokeWidth={active?5:2}/><text x={group.x+18} y={group.y-(lines.length===1?0:10)} fill={active?'white':'#13211f'} fontSize="14" fontWeight="750">{lines.map((line,index)=><tspan x={group.x+18} dy={index===0?0:19} key={`${group.key}-${index}`}>{line}</tspan>)}</text><text x={group.x+397} y={group.y+5} textAnchor="end" fill={active?'white':area.color} fontSize="13" fontWeight="800">{group.ideas.length}</text></g>})))}
-      {layout.areas.flatMap(area=>area.pillars.flatMap(pillar=>pillar.groups.flatMap(group=>group.ideas.map((idea,index)=>{const active=selectedIdeaId===idea.id;const matched=!normalized||idea.searchText.includes(normalized)||group.searchText.includes(normalized);const lines=splitLabel(idea.text,66,2);return <g data-map-node key={idea.id} className="cursor-pointer outline-none" role="button" tabIndex={0} aria-label={`Ideia original ${index+1}: ${idea.text}`} onClick={()=>focusIdea(group,idea)} onKeyDown={event=>activate(event,()=>focusIdea(group,idea))} opacity={matched?1:.12}><rect x={idea.x} y={idea.y-31} width="720" height="62" rx="15" fill={active?area.softColor:'#f1f5f9'} stroke={active?area.color:'#cbd5e1'} strokeWidth={active?4:1.5}/><text x={idea.x+16} y={idea.y-(lines.length===1?0:9)} fill="#253433" fontSize="13" fontWeight="650">{lines.map((line,lineIndex)=><tspan x={idea.x+16} dy={lineIndex===0?0:18} key={`${idea.id}-${lineIndex}`}>{line}</tspan>)}</text></g>}))))}
+      {layout.areas.map(area=>{const expanded=expandedAreas.has(area.id);return <g data-map-node key={area.id} className="cursor-pointer outline-none" role="button" tabIndex={0} aria-expanded={expanded} aria-label={`Setor ${area.name}, ${area.groupCount} grupos`} onClick={()=>toggleArea(area)} onKeyDown={event=>activate(event,()=>toggleArea(area))}><rect x={area.x} y={area.y-38} width="240" height="76" rx="20" fill={area.color}/><rect x={area.x+10} y={area.y-17} width="66" height="34" rx="17" fill="white" opacity=".2"/><text x={area.x+43} y={area.y+4} textAnchor="middle" fill="white" fontSize="10" fontWeight="900">{expanded?'− FECHAR':'+ ABRIR'}</text><text x={area.x+158} y={area.y-5} textAnchor="middle" fill="white" fontSize="18" fontWeight="800">{area.name}</text><text x={area.x+158} y={area.y+21} textAnchor="middle" fill="white" fontSize="13">{area.groupCount} grupos · {area.ideaCount} ideias</text></g>})}
+      {layout.areas.filter(area=>expandedAreas.has(area.id)).flatMap(area=>area.pillars.map(pillar=>{const expanded=expandedPillars.has(pillar.key);return <g data-map-node key={pillar.key} className="cursor-pointer outline-none" role="button" tabIndex={0} aria-expanded={expanded} aria-label={`Pilar ${pillar.name} do setor ${area.name}, ${pillar.groups.length} grupos`} onClick={()=>togglePillar(area,pillar)} onKeyDown={event=>activate(event,()=>togglePillar(area,pillar))}><rect x={pillar.x} y={pillar.y-34} width="250" height="68" rx="18" fill={area.softColor} stroke={area.color} strokeWidth="3"/><rect x={pillar.x+8} y={pillar.y-16} width="64" height="32" rx="16" fill={area.color} opacity=".13"/><text x={pillar.x+40} y={pillar.y+4} textAnchor="middle" fill={area.color} fontSize="9" fontWeight="900">{expanded?'− FECHAR':'+ ABRIR'}</text><text x={pillar.x+158} y={pillar.y-4} textAnchor="middle" fill={area.color} fontSize="17" fontWeight="800">{pillar.name}</text><text x={pillar.x+158} y={pillar.y+20} textAnchor="middle" fill={area.color} fontSize="12">{pillar.groups.length} grupos · {pillar.groups.reduce((sum,group)=>sum+group.ideas.length,0)} ideias</text></g>}))}
+      {layout.areas.filter(area=>expandedAreas.has(area.id)).flatMap(area=>area.pillars.filter(pillar=>expandedPillars.has(pillar.key)).flatMap(pillar=>pillar.groups.map(group=>{const expanded=expandedGroups.has(group.key);const active=selectedGroupKey===group.key&&!selectedIdeaId;const matched=!normalized||group.searchText.includes(normalized);const lines=splitLabel(group.group.title,34,2);return <g data-map-node key={group.key} className="cursor-pointer outline-none" role="button" tabIndex={0} aria-expanded={expanded} aria-label={`Grupo ${group.group.title}, ${group.ideas.length} ideias no pilar ${pillar.name}`} onClick={()=>toggleGroup(area,pillar,group)} onKeyDown={event=>activate(event,()=>toggleGroup(area,pillar,group))} opacity={matched?1:.14}><rect x={group.x} y={group.y-36} width="420" height="72" rx="17" fill={active?area.color:'white'} stroke={area.color} strokeWidth={active?5:2}/><rect x={group.x+335} y={group.y-16} width="72" height="32" rx="16" fill={active?'white':area.softColor} opacity={active ? .22 : 1}/><text x={group.x+371} y={group.y+4} textAnchor="middle" fill={active?'white':area.color} fontSize="9" fontWeight="900">{expanded?'− FECHAR':`+ ABRIR · ${group.ideas.length}`}</text><text x={group.x+18} y={group.y-(lines.length===1?0:10)} fill={active?'white':'#13211f'} fontSize="14" fontWeight="750">{lines.map((line,index)=><tspan x={group.x+18} dy={index===0?0:19} key={`${group.key}-${index}`}>{line}</tspan>)}</text></g>})))}
+      {layout.areas.filter(area=>expandedAreas.has(area.id)).flatMap(area=>area.pillars.filter(pillar=>expandedPillars.has(pillar.key)).flatMap(pillar=>pillar.groups.filter(group=>expandedGroups.has(group.key)).flatMap(group=>group.ideas.map((idea,index)=>{const active=selectedIdeaId===idea.id;const matched=!normalized||idea.searchText.includes(normalized)||group.searchText.includes(normalized);const lines=splitLabel(idea.text,66,2);return <g data-map-node key={idea.id} className="cursor-pointer outline-none" role="button" tabIndex={0} aria-label={`Ideia original ${index+1}: ${idea.text}`} onClick={()=>focusIdea(group,idea)} onKeyDown={event=>activate(event,()=>focusIdea(group,idea))} opacity={matched?1:.12}><rect x={idea.x} y={idea.y-31} width="720" height="62" rx="15" fill={active?area.softColor:'#f1f5f9'} stroke={active?area.color:'#cbd5e1'} strokeWidth={active?4:1.5}/><text x={idea.x+16} y={idea.y-(lines.length===1?0:9)} fill="#253433" fontSize="13" fontWeight="650">{lines.map((line,lineIndex)=><tspan x={idea.x+16} dy={lineIndex===0?0:18} key={`${idea.id}-${lineIndex}`}>{line}</tspan>)}</text></g>}))))}
      </svg>
     </div>
     {fullscreen&&details&&<aside className="relative max-h-[45%] w-full shrink-0 overflow-y-auto border-t border-brand-200 bg-white p-4 shadow-2xl sm:max-h-none sm:w-[32rem] sm:border-l sm:border-t-0">{details}</aside>}
@@ -145,6 +204,7 @@ export function AdminMindMap({workspace}:{workspace:AdminWorkspace}){
 }
 
 function pillarRank(value:string){const index=PILLAR_ORDER.indexOf(value);return index<0?PILLAR_ORDER.length:index}
+export function clampMindMapZoom(value:number){return Number.isFinite(value)?Math.max(.2,Math.min(1.5,value)):.72}
 function splitLabel(value:string,max=55,maxLines=2){
  if(value.length<=max)return[value];
  const words=value.split(' ');const lines:string[]=[];let line='';
