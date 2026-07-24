@@ -3,7 +3,7 @@ import {fallbackGroups,groupingJsonSchema,GroupingIdea,validateSuggestions} from
 
 const cors={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'authorization, x-client-info, apikey, content-type'};
 const json=(body:unknown,status=200)=>new Response(JSON.stringify(body),{status,headers:{...cors,'Content-Type':'application/json'}});
-const transitions:Record<string,string[]>={WAITING:['AI_GROUPING'],PRESENTING:['IDEATION_OPEN','WAITING'],IDEATION_OPEN:['AI_GROUPING'],IDEATION_CLOSED:['AI_GROUPING'],AI_GROUPING:['GROUP_REVIEW'],GROUP_REVIEW:['VOTING_OPEN'],VOTING_OPEN:['VOTING_WAITING'],VOTING_WAITING:['VOTING_OPEN','RESULTS'],RESULTS:['WAITING','FINISHED'],FINISHED:[]};
+const transitions:Record<string,string[]>={WAITING:['AI_GROUPING'],PRESENTING:['IDEATION_OPEN','WAITING'],IDEATION_OPEN:['AI_GROUPING'],IDEATION_CLOSED:['AI_GROUPING'],AI_GROUPING:['GROUP_REVIEW'],GROUP_REVIEW:['VOTING_OPEN'],VOTING_OPEN:['VOTING_WAITING','RESULTS'],VOTING_WAITING:['VOTING_OPEN','RESULTS'],RESULTS:['WAITING','FINISHED'],FINISHED:[]};
 const encoder=new TextEncoder();
 async function hash(value:string){const bytes=await crypto.subtle.digest('SHA-256',encoder.encode(value));return [...new Uint8Array(bytes)].map(v=>v.toString(16).padStart(2,'0')).join('')}
 async function aiGroups(ideas:GroupingIdea[]){
@@ -152,15 +152,12 @@ Deno.serve(async req=>{
       const target=String(payload.status||'');
       if(!transitions[session.status]?.includes(target))return json({error:`Transição inválida: ${session.status} → ${target}`},409);
       if(target==='VOTING_OPEN'){
-        if(!session.current_consolidated_idea_id)return json({error:'Selecione uma ideia aprovada antes de abrir a votação.'},409);
-        const [selectedResult,approvedResult,ideasResult,sourcesResult]=await Promise.all([
-          db.from('brainstorm_consolidated_ideas').select('id').eq('id',session.current_consolidated_idea_id).eq('session_id',session.id).eq('approved',true).maybeSingle(),
+        const [approvedResult,ideasResult,sourcesResult]=await Promise.all([
           db.from('brainstorm_consolidated_ideas').select('id').eq('session_id',session.id).eq('approved',true),
           db.from('brainstorm_ideas').select('id').eq('session_id',session.id),
           db.from('brainstorm_consolidated_idea_sources').select('consolidated_idea_id,idea_id')
         ]);
-        const selected=selectedResult.data;const approved=approvedResult.data||[];const ideas=ideasResult.data||[];
-        if(!selected)return json({error:'A ideia selecionada não está aprovada.'},409);
+        const approved=approvedResult.data||[];const ideas=ideasResult.data||[];
         if(approved.length===0)return json({error:'Aprove pelo menos uma ideia antes de abrir a votação.'},409);
         const ideaIds=new Set(ideas.map(idea=>idea.id));const approvedIds=new Set(approved.map(group=>group.id));
         const relevantSources=(sourcesResult.data||[]).filter(source=>ideaIds.has(source.idea_id));
