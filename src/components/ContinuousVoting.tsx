@@ -4,13 +4,13 @@ import {configured,supabase} from '../lib/supabase';
 import {ConsolidatedIdea,CRITERIA,Participant,Ratings,Session} from '../types';
 import {Chrome} from './Chrome';
 
-type VotingIdea=ConsolidatedIdea&{my_ratings:Ratings|null};
+export type VotingIdea=ConsolidatedIdea&{my_ratings:Ratings|null};
 
-export function ContinuousVoting({session,participant,online}:{session:Session;participant:Participant;online:boolean}){
- const [ideas,setIdeas]=useState<VotingIdea[]>([]);
+export function ContinuousVoting({session,participant,online,previewIdeas}:{session:Session;participant:Participant;online:boolean;previewIdeas?:VotingIdea[]}){
+ const [ideas,setIdeas]=useState<VotingIdea[]>(()=>previewIdeas||[]);
  const [index,setIndex]=useState(0);
  const [ratings,setRatings]=useState<Partial<Ratings>>({});
- const [loading,setLoading]=useState(true);
+ const [loading,setLoading]=useState(!previewIdeas);
  const [busy,setBusy]=useState(false);
  const [error,setError]=useState('');
  const [completed,setCompleted]=useState(false);
@@ -24,6 +24,7 @@ export function ContinuousVoting({session,participant,online}:{session:Session;p
 
  const load=async()=>{
   setLoading(true);setError('');
+  if(previewIdeas){setIdeas(previewIdeas);setLoading(false);return}
   if(!configured){setLoading(false);return}
   const {data,error}=await supabase.rpc('brainstorm_get_voting_queue',{p_session_id:session.id,p_participant_id:participant.id,p_token:participant.anonymous_token});
   if(error){setError('Não foi possível carregar a fila de votação. Atualize a página e tente novamente.');setLoading(false);return}
@@ -41,6 +42,15 @@ export function ContinuousVoting({session,participant,online}:{session:Session;p
  const submit=async()=>{
   if(!current||!matchesAllCriteria)return;
   setBusy(true);setError('');
+  if(previewIdeas){
+   const saved=ratings as Ratings;
+   const updated=ideas.map((idea,position)=>position===index?{...idea,my_ratings:saved}:idea);
+   setIdeas(updated);
+   if(index<updated.length-1)setIndex(index+1);else setCompleted(true);
+   setBusy(false);
+   window.scrollTo({top:0,behavior:'smooth'});
+   return
+  }
   if(!configured){setBusy(false);return}
   const {error}=await supabase.rpc('brainstorm_submit_vote',{p_session_id:session.id,p_idea_id:current.id,p_participant_id:participant.id,p_token:participant.anonymous_token,p_ratings:ratings});
   if(error){setError(online?'Não foi possível salvar sua avaliação. Tente novamente.':'Você está sem conexão. Reconecte-se antes de continuar.');setBusy(false);return}
@@ -63,6 +73,7 @@ export function ContinuousVoting({session,participant,online}:{session:Session;p
  if(!current)return <Chrome online={online}><div className="card mx-auto max-w-xl text-center"><h1 className="text-2xl font-black">Nenhuma ideia disponível</h1><p className="mt-2 text-slate-600">O facilitador ainda está preparando a fila.</p></div></Chrome>;
 
  return <Chrome online={online} compact><div className="mx-auto max-w-3xl pb-28 sm:pb-0">
+  {previewIdeas&&<div className="mb-4 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-900">Prévia da votação — nenhuma resposta será salva.</div>}
   <div className="flex items-end justify-between gap-3"><div><p className="font-semibold text-brand-700">Ideia {index+1} de {ideas.length}</p><p className="mt-0.5 text-sm text-slate-500">{votedCount} avaliadas · {remaining} restantes</p></div><span className="shrink-0 rounded-full bg-brand-50 px-3 py-1 text-sm font-bold text-brand-700">{percentage}%</span></div>
   <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-200"><div className="h-full bg-brand-600 transition-all" style={{width:`${percentage}%`}}/></div>
   <div className="mt-4 hidden gap-1 overflow-x-auto pb-2 sm:flex" aria-label="Navegação pelas ideias">{ideas.map((idea,position)=><button aria-label={`Ir para ideia ${position+1}${idea.my_ratings?', já avaliada':''}`} className={`grid size-9 shrink-0 place-items-center rounded-full text-xs font-bold ${position===index?'bg-slate-900 text-white':idea.my_ratings?'bg-brand-100 text-brand-700':'bg-slate-200 text-slate-600'}`} onClick={()=>navigate(position)} key={idea.id}>{idea.my_ratings?<Check size={14}/>:position+1}</button>)}</div>
