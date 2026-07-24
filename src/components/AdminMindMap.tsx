@@ -1,4 +1,4 @@
-import {KeyboardEvent,useEffect,useLayoutEffect,useMemo,useRef,useState} from 'react';
+import {KeyboardEvent,PointerEvent as ReactPointerEvent,WheelEvent as ReactWheelEvent,useEffect,useLayoutEffect,useMemo,useRef,useState} from 'react';
 import {ChevronsDownUp,LocateFixed,Maximize2,Minimize2,Network,Search,X,ZoomIn,ZoomOut} from 'lucide-react';
 import {AdminWorkspace} from './AdminGrouping';
 
@@ -33,7 +33,9 @@ export function AdminMindMap({workspace}:{workspace:AdminWorkspace}){
  const [expandedGroups,setExpandedGroups]=useState<Set<string>>(()=>new Set());
  const [zoomLevel,setZoomLevel]=useState(()=>typeof window!=='undefined'&&window.innerWidth<640 ? .5 : .72);
  const [pendingFocus,setPendingFocus]=useState<FocusTarget|null>(null);
+ const [isPanning,setIsPanning]=useState(false);
  const viewportRef=useRef<HTMLDivElement|null>(null);
+ const panStart=useRef<{clientX:number;clientY:number;scrollLeft:number;scrollTop:number}|null>(null);
  const roundsById=useMemo(()=>new Map(workspace.rounds.map(round=>[round.id,round])),[workspace.rounds]);
  const ideasById=useMemo(()=>new Map(workspace.ideas.map(idea=>[idea.id,idea])),[workspace.ideas]);
  const sourceIdsByGroup=useMemo(()=>{const result=new Map<string,string[]>();workspace.sources.forEach(source=>result.set(source.consolidated_idea_id,[...(result.get(source.consolidated_idea_id)||[]),source.idea_id]));return result},[workspace.sources]);
@@ -98,6 +100,37 @@ export function AdminMindMap({workspace}:{workspace:AdminWorkspace}){
  const rootY=layout.height/2;
 
  const zoom=(factor:number)=>setZoomLevel(current=>clampMindMapZoom(current*factor));
+ const startPan=(event:ReactPointerEvent<HTMLDivElement>)=>{
+  if(event.pointerType==='touch'||event.button!==0||(event.target as Element).closest('[data-map-node]'))return;
+  panStart.current={clientX:event.clientX,clientY:event.clientY,scrollLeft:event.currentTarget.scrollLeft,scrollTop:event.currentTarget.scrollTop};
+  event.currentTarget.setPointerCapture(event.pointerId);
+  setIsPanning(true);
+  event.preventDefault()
+ };
+ const movePan=(event:ReactPointerEvent<HTMLDivElement>)=>{
+  if(!panStart.current)return;
+  event.currentTarget.scrollLeft=panStart.current.scrollLeft-(event.clientX-panStart.current.clientX);
+  event.currentTarget.scrollTop=panStart.current.scrollTop-(event.clientY-panStart.current.clientY);
+  event.preventDefault()
+ };
+ const endPan=(event:ReactPointerEvent<HTMLDivElement>)=>{
+  panStart.current=null;
+  if(event.currentTarget.hasPointerCapture(event.pointerId))event.currentTarget.releasePointerCapture(event.pointerId);
+  setIsPanning(false)
+ };
+ const wheelZoom=(event:ReactWheelEvent<HTMLDivElement>)=>{
+  if(!event.ctrlKey&&!event.metaKey)return;
+  event.preventDefault();
+  const viewport=event.currentTarget;
+  const bounds=viewport.getBoundingClientRect();
+  const offsetX=event.clientX-bounds.left;
+  const offsetY=event.clientY-bounds.top;
+  const contentX=(viewport.scrollLeft+offsetX)/zoomLevel;
+  const contentY=(viewport.scrollTop+offsetY)/zoomLevel;
+  const next=clampMindMapZoom(zoomLevel*(event.deltaY>0 ? .88 : 1.12));
+  setZoomLevel(next);
+  requestAnimationFrame(()=>viewport.scrollTo({left:Math.max(0,contentX*next-offsetX),top:Math.max(0,contentY*next-offsetY)}))
+ };
  const fitAll=()=>{
   const viewport=viewportRef.current;
   if(!viewport)return;
@@ -175,12 +208,17 @@ export function AdminMindMap({workspace}:{workspace:AdminWorkspace}){
    {navigationArea&&<div className="mt-3 rounded-xl border border-slate-200 bg-white p-3"><span className="text-xs font-black uppercase tracking-wide text-slate-500">Pilares de {navigationArea.name}</span><div className="mt-2 flex flex-wrap gap-2">{navigationArea.pillars.map(pillar=>{const expanded=expandedAreas.has(navigationArea.id)&&expandedPillars.has(pillar.key);return <button aria-expanded={expanded} className={`rounded-lg border px-3 py-2 text-xs font-bold ${expanded?'shadow-sm ring-2 ring-offset-1':'hover:bg-slate-50'}`} style={{borderColor:navigationArea.color,color:navigationArea.color,backgroundColor:expanded?navigationArea.softColor:'white'}} onClick={()=>controlPillar(navigationArea,pillar)} key={pillar.key}><span className="mr-1 font-black">{expanded?'− Fechar':'+ Abrir'}</span> {pillar.name} · {pillar.groups.length}</button>})}</div></div>}
    <div className="mt-3 flex flex-wrap items-end gap-2"><label className="min-w-64 flex-1"><span className="label">Buscar grupo ou ideia original</span><span className="relative block"><Search className="absolute left-3 top-3.5 text-slate-400" size={18}/><input className="field pl-10" value={query} onChange={event=>handleSearch(event.target.value)} onKeyDown={event=>event.key==='Enter'&&nextMatch()} placeholder="Ex.: CRM, documentos, parceiros"/></span></label><button className="btn-secondary" disabled={!normalized||matches.length===0} onClick={nextMatch}><LocateFixed className="mr-2" size={17}/>{normalized?`${matches.length} resultado(s)`:'Localizar'}</button><div className="flex gap-1"><button aria-label="Aumentar mapa" className="btn-secondary min-w-12 px-3" onClick={()=>zoom(1.18)}><ZoomIn size={19}/></button><button aria-label="Diminuir mapa" className="btn-secondary min-w-12 px-3" onClick={()=>zoom(.85)}><ZoomOut size={19}/></button></div></div>
    <div className="mt-3 flex flex-wrap gap-2 text-xs font-bold"><span className="rounded-full bg-slate-900 px-3 py-1 text-white">Setor</span><span className="rounded-full bg-blue-100 px-3 py-1 text-blue-800">Pilar</span><span className="rounded-full border border-slate-400 bg-white px-3 py-1">Grupo</span><span className="rounded-full bg-slate-100 px-3 py-1 text-slate-700">Ideia original</span></div>
-   <p className="mt-2 text-xs text-slate-500">Clique em setor, pilar ou grupo para abrir e fechar aquele ramo. Navegue pelas barras de rolagem do mapa e use os botões + e − para ampliar. Pressione Esc para sair da tela cheia.</p>
+   <p className="mt-2 text-xs text-slate-500">Arraste o fundo para navegar livremente. Use a roda para rolar, Ctrl/⌘ + roda ou os botões + e − para ampliar. Clique nos nós para abrir e fechar os ramos.</p>
    <div className={`relative mt-3 overflow-hidden rounded-xl border border-slate-200 bg-slate-50 ${fullscreen?'flex min-h-0 flex-1 flex-col sm:flex-row':''}`}>
     <div
      ref={viewportRef}
      aria-label="Área navegável do mapa mental"
-     className={fullscreen?'min-h-0 min-w-0 flex-1 overflow-auto overscroll-contain outline-none focus:ring-2 focus:ring-inset focus:ring-brand-400':'h-[38rem] w-full overflow-auto overscroll-contain outline-none focus:ring-2 focus:ring-inset focus:ring-brand-400'}
+     className={`${fullscreen?'min-h-0 min-w-0 flex-1':'h-[38rem] w-full'} ${isPanning?'cursor-grabbing':'cursor-grab'} overflow-auto overscroll-contain outline-none focus:ring-2 focus:ring-inset focus:ring-brand-400`}
+     onPointerDown={startPan}
+     onPointerMove={movePan}
+     onPointerUp={endPan}
+     onPointerCancel={endPan}
+     onWheel={wheelZoom}
      tabIndex={0}
     >
      <svg className="block max-w-none select-none" width={CANVAS_WIDTH*zoomLevel} height={layout.height*zoomLevel} viewBox={`0 0 ${CANVAS_WIDTH} ${layout.height}`} role="img" aria-label="Mapa mental completo das ideias aprovadas">
