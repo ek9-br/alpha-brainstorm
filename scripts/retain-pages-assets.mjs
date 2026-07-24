@@ -3,13 +3,14 @@ import {join} from 'node:path';
 
 const assetsDirectory=new URL('../dist/assets/',import.meta.url);
 const files=await readdir(assetsDirectory);
-const javascript=files.find(file=>file==='app.js')||files.find(file=>file.endsWith('.js'));
-const stylesheet=files.find(file=>file==='index.css')||files.find(file=>file.endsWith('.css'));
+const javascript=files.find(file=>file.startsWith('index-')&&file.endsWith('.js'))||files.find(file=>file.endsWith('.js'));
+const stylesheet=files.find(file=>file.startsWith('index-')&&file.endsWith('.css'))||files.find(file=>file.endsWith('.css'));
 
 if(!javascript)throw new Error('Arquivo JavaScript do build não encontrado.');
 if(!stylesheet)throw new Error('Arquivo CSS do build não encontrado.');
 
 const legacyJavascript=[
+ 'app.js',
  'index-CTZUEW3W.js',
  'index-DOrarwhx.js',
  'index-Dru5E0yA.js',
@@ -18,6 +19,7 @@ const legacyJavascript=[
  'index-l4Bs9NRE.js'
 ];
 const legacyStylesheets=[
+ 'index.css',
  'index-bkiq7i95.css',
  'index-VembXYGE.css',
  'index-D7LOXe8D.css',
